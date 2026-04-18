@@ -1,6 +1,7 @@
 const nodemailer = require("nodemailer");
 console.log("EMAIL_USER:", process.env.EMAIL_USER);
 console.log("EMAIL_PASS exists:", !!process.env.EMAIL_PASS);
+console.log("STORE_NAME:", process.env.STORE_NAME);
 
 const transporter = nodemailer.createTransport({
   service: "gmail",
@@ -12,7 +13,7 @@ const transporter = nodemailer.createTransport({
 
 const sendVerificationEmail = async (email, code, name) => {
   await transporter.sendMail({
-    from: `"My Store" <${process.env.EMAIL_USER}>`,
+    from: `${process.env.STORE_NAME} <${process.env.EMAIL_USER}>`,
     to: email,
     subject: "Verify Your Email",
     html: `
