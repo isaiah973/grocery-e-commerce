@@ -7,22 +7,24 @@ dotenv.config();
 
 const connectDB = require("./config/db");
 const userRoutes = require("./Routes/userRoutes");
+const productRoutes = require("./Routes/productRoutes");
 
 const app = express();
 
 connectDB();
 
-app.use(
-  cors({
-    origin: "http://localhost:5173",
-    credentials: true,
-  }),
-);
+app.use(cors({
+  origin: ["http://localhost:5173", "https://your-frontend.vercel.app"],
+  credentials: true
+}));
 
 app.use(express.json());
 app.use(cookieParser());
 
 app.use("/api/users", userRoutes);
+app.use("/api/products", productRoutes);
+
+
 
 app.get("/", (req, res) => {
   res.send("API is running...");
