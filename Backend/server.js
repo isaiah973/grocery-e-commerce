@@ -8,23 +8,28 @@ dotenv.config();
 const connectDB = require("./config/db");
 const userRoutes = require("./Routes/userRoutes");
 const productRoutes = require("./Routes/productRoutes");
+const paystackRoutes = require("./Routes/paystackRoutes");
 
 const app = express();
 
 connectDB();
 
-app.use(cors({
-  origin: ["http://localhost:5173", "https://your-frontend.vercel.app"],
-  credentials: true
-}));
+// middleware first
+app.use(
+  cors({
+    origin: ["http://localhost:5173", "https://your-frontend.vercel.app"],
+    credentials: true,
+  })
+);
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
+// routes after middleware
 app.use("/api/users", userRoutes);
 app.use("/api/products", productRoutes);
-
-
+app.use("/api/paystack", paystackRoutes);
 
 app.get("/", (req, res) => {
   res.send("API is running...");
