@@ -46,4 +46,28 @@ const adminOnly = (req, res, next) => {
   next();
 };
 
-module.exports = { protect, adminOnly };
+// OPTIONAL AUTH
+const protectOptional = async (req, res, next) => {
+  try {
+    const token = req.cookies.token;
+
+    if (!token) {
+      req.user = null; // no user, but continue
+      return next();
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    const user = await User.findById(decoded.userId).select("-password");
+
+    req.user = user || null;
+
+    next();
+  } catch (error) {
+    // if token invalid, just ignore and continue
+    req.user = null;
+    next();
+  }
+};
+
+module.exports = { protect, adminOnly, protectOptional };

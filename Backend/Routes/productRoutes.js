@@ -9,17 +9,19 @@ const {
   deleteProduct,
   toggleProductStatus,
 } = require("../controllers/productController");
-const { protect, adminOnly } = require("../Middleware/authMiddleware");
+
+const { protect, adminOnly, protectOptional } = require("../Middleware/authMiddleware");
 
 const router = express.Router();
 
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
-// routes
+// ✅ PUBLIC ROUTES
 router.get("/get-products", getAllProducts);
-router.get("/product/:id", getSingleProduct);
+router.get("/product/:id", protectOptional, getSingleProduct);
 
+// 🔐 ADMIN ROUTES
 router.post(
   "/create-product",
   protect,
@@ -27,8 +29,27 @@ router.post(
   upload.single("image"),
   createProduct
 );
-router.put("/update-product/:id", upload.single("image"), updateProduct);
-router.delete("/delete-product/:id", deleteProduct);
-router.patch("/toggle-product/:id", toggleProductStatus);
+
+router.put(
+  "/update-product/:id",
+  protect,
+  adminOnly,
+  upload.single("image"),
+  updateProduct
+);
+
+router.delete(
+  "/delete-product/:id",
+  protect,
+  adminOnly,
+  deleteProduct
+);
+
+router.patch(
+  "/toggle-product/:id",
+  protect,
+  adminOnly,
+  toggleProductStatus
+);
 
 module.exports = router;

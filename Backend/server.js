@@ -9,6 +9,7 @@ const connectDB = require("./config/db");
 const userRoutes = require("./Routes/userRoutes");
 const productRoutes = require("./Routes/productRoutes");
 const paystackRoutes = require("./Routes/paystackRoutes");
+const orderRoutes = require("./Routes/orderRoutes");
 
 const app = express();
 
@@ -30,6 +31,7 @@ app.use(cookieParser());
 app.use("/api/users", userRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/paystack", paystackRoutes);
+app.use("/api/orders", orderRoutes);
 
 app.get("/", (req, res) => {
   res.send("API is running...");
