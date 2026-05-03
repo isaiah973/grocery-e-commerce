@@ -13,6 +13,7 @@ const toKobo = (amountInNaira) => {
   return Math.round(Number(amountInNaira) * 100);
 };
 
+// calculate order from DB, not frontend price
 const calculateOrderTotals = async (items) => {
   let orderItems = [];
   let itemsPrice = 0;
@@ -49,12 +50,71 @@ const calculateOrderTotals = async (items) => {
     itemsPrice += product.price * item.quantity;
   }
 
-  return {
-    orderItems,
-    itemsPrice,
-  };
+  return { orderItems, itemsPrice };
 };
 
+// shared stock reducer
+const reduceStockOnce = async (order) => {
+  if (order.isStockReduced) return;
+
+  for (const item of order.orderItems) {
+    const product = await Product.findById(item.product);
+
+    if (!product) {
+      throw new Error(`Product not found during stock update: ${item.product}`);
+    }
+
+    if (product.stock < item.quantity) {
+      throw new Error(`Insufficient stock while updating ${product.title}`);
+    }
+
+    product.stock -= item.quantity;
+    await product.save();
+  }
+
+  order.isStockReduced = true;
+};
+
+// shared successful payment handler
+const markOrderPaid = async (reference, paymentData) => {
+  const order = await Order.findOne({ paystackReference: reference });
+
+  if (!order) return null;
+
+  // prevents double update and double stock reduction
+  if (order.paymentStatus === "paid") {
+    return order;
+  }
+
+  order.paymentStatus = "paid";
+  order.orderStatus = "processing";
+  order.paidAt = new Date();
+  order.paymentDetails = paymentData;
+
+  await reduceStockOnce(order);
+  await order.save();
+
+  return order;
+};
+
+// shared failed payment handler
+const markOrderFailed = async (reference, paymentData) => {
+  const order = await Order.findOne({ paystackReference: reference });
+
+  if (!order) return null;
+
+  if (order.paymentStatus === "paid") {
+    return order;
+  }
+
+  order.paymentStatus = "failed";
+  order.paymentDetails = paymentData;
+  await order.save();
+
+  return order;
+};
+
+// INIT PAYMENT
 const initializePayment = async (req, res) => {
   try {
     const { items, shippingAddress, email } = req.body;
@@ -75,9 +135,8 @@ const initializePayment = async (req, res) => {
 
     const { orderItems, itemsPrice } = await calculateOrderTotals(items);
 
-    const shippingPrice = 0; // change later if you use shipping rules
+    const shippingPrice = 0;
     const totalPrice = itemsPrice + shippingPrice;
-
     const reference = generateReference();
 
     const order = await Order.create({
@@ -120,7 +179,7 @@ const initializePayment = async (req, res) => {
           Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
           "Content-Type": "application/json",
         },
-      }
+      },
     );
 
     const data = response.data;
@@ -137,7 +196,10 @@ const initializePayment = async (req, res) => {
       orderId: order._id,
     });
   } catch (error) {
-    console.error("Initialize payment error:", error.response?.data || error.message);
+    console.error(
+      "Initialize payment error:",
+      error.response?.data || error.message,
+    );
 
     return res.status(error.statusCode || 500).json({
       success: false,
@@ -147,6 +209,7 @@ const initializePayment = async (req, res) => {
   }
 };
 
+// VERIFY PAYMENT
 const verifyPayment = async (req, res) => {
   try {
     const { reference } = req.params;
@@ -164,12 +227,20 @@ const verifyPayment = async (req, res) => {
         headers: {
           Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
         },
-      }
+      },
     );
 
     const paystackData = response.data.data;
 
-    const order = await Order.findOne({ paystackReference: reference });
+    let order;
+
+    if (paystackData.status === "success") {
+      order = await markOrderPaid(reference, paystackData);
+    } else if (paystackData.status === "failed") {
+      order = await markOrderFailed(reference, paystackData);
+    } else {
+      order = await Order.findOne({ paystackReference: reference });
+    }
 
     if (!order) {
       return res.status(404).json({
@@ -178,46 +249,19 @@ const verifyPayment = async (req, res) => {
       });
     }
 
-    if (paystackData.status === "success") {
-      if (order.paymentStatus !== "paid") {
-        order.paymentStatus = "paid";
-        order.orderStatus = "processing";
-        order.paidAt = new Date();
-        order.paymentDetails = paystackData;
-
-        if (!order.isStockReduced) {
-          for (const item of order.orderItems) {
-            const product = await Product.findById(item.product);
-
-            if (!product) {
-              throw new Error(`Product not found during stock update: ${item.product}`);
-            }
-
-            if (product.stock < item.quantity) {
-              throw new Error(`Insufficient stock while finalizing order for ${product.title}`);
-            }
-
-            product.stock -= item.quantity;
-            await product.save();
-          }
-
-          order.isStockReduced = true;
-        }
-
-        await order.save();
-      }
-    }
-
     return res.status(200).json({
       success: true,
       message: "Payment verification completed",
       paymentStatus: order.paymentStatus,
       orderStatus: order.orderStatus,
-      order,
       paystackStatus: paystackData.status,
+      order,
     });
   } catch (error) {
-    console.error("Verify payment error:", error.response?.data || error.message);
+    console.error(
+      "Verify payment error:",
+      error.response?.data || error.message,
+    );
 
     return res.status(500).json({
       success: false,
@@ -227,57 +271,36 @@ const verifyPayment = async (req, res) => {
   }
 };
 
+// WEBHOOK
 const handleWebhook = async (req, res) => {
   try {
     const signature = req.headers["x-paystack-signature"];
 
+    if (!signature) {
+      return res.status(401).json({ message: "Missing Paystack signature" });
+    }
+
+    const rawBody = Buffer.isBuffer(req.body)
+      ? req.body.toString("utf8")
+      : JSON.stringify(req.body);
+
     const hash = crypto
       .createHmac("sha512", process.env.PAYSTACK_SECRET_KEY)
-      .update(JSON.stringify(req.body))
+      .update(rawBody)
       .digest("hex");
 
     if (hash !== signature) {
-      return res.status(401).send("Invalid signature");
+      return res.status(401).json({ message: "Invalid Paystack signature" });
     }
 
-    const event = req.body;
+    const event = Buffer.isBuffer(req.body) ? JSON.parse(rawBody) : req.body;
 
     if (event.event === "charge.success") {
-      const reference = event.data.reference;
+      await markOrderPaid(event.data.reference, event.data);
+    }
 
-      const order = await Order.findOne({ paystackReference: reference });
-
-      if (!order) {
-        return res.status(200).json({ received: true });
-      }
-
-      if (order.paymentStatus !== "paid") {
-        order.paymentStatus = "paid";
-        order.orderStatus = "processing";
-        order.paidAt = new Date();
-        order.paymentDetails = event.data;
-
-        if (!order.isStockReduced) {
-          for (const item of order.orderItems) {
-            const product = await Product.findById(item.product);
-
-            if (!product) {
-              throw new Error(`Product not found during webhook stock update: ${item.product}`);
-            }
-
-            if (product.stock < item.quantity) {
-              throw new Error(`Insufficient stock while updating ${product.title}`);
-            }
-
-            product.stock -= item.quantity;
-            await product.save();
-          }
-
-          order.isStockReduced = true;
-        }
-
-        await order.save();
-      }
+    if (event.event === "charge.failed") {
+      await markOrderFailed(event.data.reference, event.data);
     }
 
     return res.status(200).json({ received: true });

@@ -15,6 +15,10 @@ router.post("/initialize", protect, initializePayment);
 router.get("/verify/:reference", protect, verifyPayment);
 
 // webhook from paystack
-router.post("/webhook", handleWebhook);
+router.post(
+  "/webhook",
+  express.raw({ type: "application/json" }),
+  handleWebhook,
+);
 
 module.exports = router;
